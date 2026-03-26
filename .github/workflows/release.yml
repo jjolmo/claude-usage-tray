@@ -9,23 +9,68 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            artifact: claude-usage-tray-macos
-            pyinstaller_args: --windowed --onefile
-          - os: ubuntu-latest
-            artifact: claude-usage-tray-linux
-            pyinstaller_args: --onefile
-          - os: windows-latest
-            artifact: claude-usage-tray-windows
-            pyinstaller_args: --windowed --onefile
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
 
-    runs-on: ${{ matrix.os }}
+      - name: Build macOS .app bundle
+        run: |
+          APP="claude-usage-tray-macos.app"
+          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/Resources/assets"
 
+          # Copy source files
+          cp claude_tray.py config.py usage_api.py settings_dialog.py "$APP/Contents/Resources/"
+          cp assets/icon.png "$APP/Contents/Resources/assets/"
+
+          # Create launcher script
+          cat > "$APP/Contents/MacOS/run" << 'LAUNCHER'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
+          VENV="$HOME/.claude-usage-tray-venv"
+          if [ ! -d "$VENV" ]; then
+            python3 -m venv "$VENV"
+            "$VENV/bin/pip" install --quiet platformdirs rumps certifi
+          fi
+          cd "$DIR"
+          exec "$VENV/bin/python" claude_tray.py
+          LAUNCHER
+          # Fix indentation from heredoc
+          sed -i '' 's/^          //' "$APP/Contents/MacOS/run"
+          chmod +x "$APP/Contents/MacOS/run"
+
+          # Create Info.plist
+          cat > "$APP/Contents/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>run</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.claude-usage-tray</string>
+            <key>CFBundleName</key>
+            <string>Claude Usage Tray</string>
+            <key>CFBundleVersion</key>
+            <string>1.0</string>
+            <key>LSUIElement</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          sed -i '' 's/^          //' "$APP/Contents/Info.plist"
+
+          zip -r claude-usage-tray-macos.zip "$APP"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-usage-tray-macos
+          path: claude-usage-tray-macos.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -34,81 +79,59 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Linux system dependencies
-        if: runner.os == 'Linux'
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libegl1 \
-            libxkbcommon0
+          sudo apt-get install -y libegl1 libxkbcommon0
 
-      - name: Install Python dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          pip install platformdirs rumps certifi pyinstaller
+      - name: Install Python dependencies
+        run: pip install platformdirs PyQt6 Pillow pyinstaller
 
-      - name: Install Python dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          pip install platformdirs PyQt6 Pillow pyinstaller
-
-      - name: Install Python dependencies (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          pip install platformdirs pystray Pillow pyinstaller
-
-      - name: Build with PyInstaller (macOS)
-        if: runner.os == 'macOS'
-        run: >
-          pyinstaller --windowed --onefile
-          --name ${{ matrix.artifact }}
-          --add-data "assets:assets"
-          --hidden-import certifi
-          --collect-data certifi
-          claude_tray.py
-
-      - name: Build with PyInstaller (Linux)
-        if: runner.os == 'Linux'
+      - name: Build with PyInstaller
         run: >
           pyinstaller --onefile
-          --name ${{ matrix.artifact }}
+          --name claude-usage-tray-linux
           --add-data "assets:assets"
           --hidden-import PyQt6.QtWidgets
           --hidden-import PyQt6.QtGui
           --hidden-import PyQt6.QtCore
           claude_tray.py
 
-      - name: Build with PyInstaller (Windows)
-        if: runner.os == 'Windows'
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-usage-tray-linux
+          path: dist/claude-usage-tray-linux*
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install platformdirs pystray Pillow pyinstaller
+
+      - name: Build with PyInstaller
         run: >
           pyinstaller --windowed --onefile
-          --name ${{ matrix.artifact }}
+          --name claude-usage-tray-windows
           --add-data "assets;assets"
           --hidden-import pystray._win32
           claude_tray.py
 
-      - name: Package macOS app
-        if: runner.os == 'macOS'
-        run: |
-          cd dist
-          zip -r ${{ matrix.artifact }}.zip ${{ matrix.artifact }}.app
-
-      - name: Upload artifact (macOS)
-        if: runner.os == 'macOS'
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}.zip
-
-      - name: Upload artifact (Linux/Windows)
-        if: runner.os != 'macOS'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}*
+          name: claude-usage-tray-windows
+          path: dist/claude-usage-tray-windows*
 
   release:
-    needs: build
+    needs: [build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
 
     steps:
