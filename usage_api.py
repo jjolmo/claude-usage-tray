@@ -15,7 +15,16 @@ class APIError(Exception):
     pass
 
 
-SSL_CTX = ssl.create_default_context()
+def _create_ssl_context():
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+        ctx.load_verify_locations(certifi.where())
+    except ImportError:
+        pass
+    return ctx
+
+SSL_CTX = _create_ssl_context()
 
 ORGS_URL = "https://claude.ai/api/organizations"
 USAGE_URL = "https://claude.ai/api/organizations/{org_id}/usage"

@@ -45,7 +45,7 @@ jobs:
       - name: Install Python dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          pip install platformdirs rumps pyinstaller
+          pip install platformdirs rumps certifi pyinstaller
 
       - name: Install Python dependencies (Linux)
         if: runner.os == 'Linux'
@@ -63,6 +63,8 @@ jobs:
           pyinstaller --windowed --onefile
           --name ${{ matrix.artifact }}
           --add-data "assets:assets"
+          --hidden-import certifi
+          --collect-data certifi
           claude_tray.py
 
       - name: Build with PyInstaller (Linux)

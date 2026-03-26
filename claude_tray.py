@@ -47,13 +47,16 @@ def run_macos():
                 rumps.MenuItem("Update session cookie...", callback=self.open_settings),
             ]
 
-            if not is_configured():
-                threading.Timer(1.0, lambda: self.open_settings(None)).start()
-            else:
+            self._needs_setup = not is_configured()
+            if is_configured():
                 threading.Thread(target=self._refresh, daemon=True).start()
 
-        @rumps.timer(300)
-        def auto_refresh(self, _):
+        @rumps.timer(1)
+        def _tick(self, timer):
+            if self._needs_setup:
+                self._needs_setup = False
+                self.open_settings(None)
+            timer.interval = self.config.get("refresh_interval", 5) * 60
             if not self.config.get("session_cookie"):
                 return
             threading.Thread(target=self._refresh, daemon=True).start()
