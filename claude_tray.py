@@ -10,7 +10,7 @@ import webbrowser
 from datetime import datetime
 
 from config import load_config, save_config, is_configured
-from usage_api import fetch_usage, parse_usage, AuthError, APIError
+from usage_api import fetch_usage, fetch_org_id, parse_usage, AuthError, APIError
 
 CLAUDE_SETTINGS_URL = "https://claude.ai/settings/usage"
 
@@ -82,25 +82,12 @@ def run_macos():
                 return
             cookie = r.text.strip()
 
-            # Org ID
-            w = rumps.Window(
-                message=(
-                    "How to get your Organization ID:\n\n"
-                    "1. Go to claude.ai/settings\n"
-                    "2. Look at the URL bar — it contains your org UUID\n"
-                    "   Example: claude.ai/settings/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n\n"
-                    "Paste the UUID below:"
-                ),
-                title="Organization ID",
-                default_text=self.config.get("org_id", ""),
-                ok="Next",
-                cancel="Cancel",
-                dimensions=(400, 40),
-            )
-            r = w.run()
-            if not r.clicked:
-                return
-            org_id = r.text.strip()
+            # Auto-detect org ID
+            org_id = self.config.get("org_id", "")
+            try:
+                org_id = fetch_org_id(cookie)
+            except Exception as e:
+                rumps.alert(f"Could not auto-detect org ID: {e}\n\nUsing previous value.")
 
             # Refresh interval
             w = rumps.Window(
@@ -127,10 +114,20 @@ def run_macos():
             threading.Thread(target=self._refresh, daemon=True).start()
 
         def _refresh(self):
-            if not self.config.get("session_cookie") or not self.config.get("org_id"):
+            if not self.config.get("session_cookie"):
                 self.title = "Setup"
                 self.session_item.title = "Click Settings to configure"
                 return
+
+            # Auto-detect org_id if missing
+            if not self.config.get("org_id"):
+                try:
+                    self.config["org_id"] = fetch_org_id(self.config["session_cookie"])
+                    save_config(self.config)
+                except Exception:
+                    self.title = "Setup"
+                    self.session_item.title = "Click Settings to configure"
+                    return
 
             try:
                 data = fetch_usage(self.config["session_cookie"], self.config["org_id"])
