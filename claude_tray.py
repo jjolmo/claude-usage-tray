@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Claude Usage Tray — cross-platform system tray app showing Claude subscription usage.
 
-Uses rumps on macOS (native menu bar text), pystray+Pillow on Linux/Windows.
+Uses rumps on macOS (native menu bar text), PyQt6 QSystemTrayIcon on Linux (KDE/GNOME).
 """
 
 import sys
@@ -48,7 +48,6 @@ def run_macos():
             ]
 
             if not is_configured():
-                # Show settings dialog on first launch after a short delay
                 threading.Timer(1.0, lambda: self.open_settings(None)).start()
             else:
                 threading.Thread(target=self._refresh, daemon=True).start()
@@ -90,7 +89,6 @@ def run_macos():
                 rumps.alert("No cookie entered. Settings not saved.")
                 return
 
-            # Auto-detect org ID
             org_id = self.config.get("org_id", "")
             try:
                 org_id = fetch_org_id(cookie)
@@ -131,7 +129,6 @@ def run_macos():
                 self.session_item.title = "Click Settings to configure"
                 return
 
-            # Auto-detect org_id if missing
             if not self.config.get("org_id"):
                 try:
                     self.config["org_id"] = fetch_org_id(self.config["session_cookie"])
@@ -169,148 +166,287 @@ def run_macos():
 
 
 # ---------------------------------------------------------------------------
-# Linux / Windows backend (pystray + Pillow)
+# Linux backend (PyQt6 QSystemTrayIcon — native KDE/GNOME)
 # ---------------------------------------------------------------------------
 
-def run_pystray():
-    from PIL import Image, ImageDraw, ImageFont
-    import pystray
-    from settings_dialog import show_settings
+def run_qt():
+    from PyQt6.QtWidgets import (
+        QApplication, QSystemTrayIcon, QMenu, QDialog,
+        QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+        QSpinBox, QPushButton, QGroupBox, QCheckBox,
+        QMessageBox,
+    )
+    from PyQt6.QtGui import QIcon, QImage, QPainter, QColor, QFont, QPixmap, QAction
+    from PyQt6.QtCore import QTimer, Qt, QSize, QObject, pyqtSignal
 
-    def _get_font(size):
-        paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-            "C:\\Windows\\Fonts\\arial.ttf",
-        ]
-        for p in paths:
-            try:
-                return ImageFont.truetype(p, size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+    app = QApplication(sys.argv)
+    app.setApplicationName("Claude Usage Tray")
+    app.setQuitOnLastWindowClosed(False)
 
-    def create_text_icon(text, size=128):
-        # Solid dark background — transparent icons don't work on KDE/AppIndicator
-        bg_color = (45, 45, 45, 255)
-        text_color = (255, 255, 255, 255)
+    # Bridge to emit signals from background threads to the main Qt thread
+    class RefreshSignal(QObject):
+        finished = pyqtSignal()
 
-        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-
-        # Rounded rectangle background
-        r = size // 8
-        draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=r, fill=bg_color)
-
-        font_size = size // 3
-        font = _get_font(font_size)
-        bbox = draw.textbbox((0, 0), text, font=font)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        while tw > size - 8 and font_size > 10:
-            font_size -= 2
-            font = _get_font(font_size)
-            bbox = draw.textbbox((0, 0), text, font=font)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        x = (size - tw) // 2 - bbox[0]
-        y = (size - th) // 2 - bbox[1]
-        draw.text((x, y), text, fill=text_color, font=font)
-        return img
+    refresh_signal = RefreshSignal()
 
     config = load_config()
-    usage = [None]
-    last_error = [None]
-    last_updated = [None]
-    stop_event = threading.Event()
-    quit_flag = [False]
-    icon_ref = [None]
+    usage_data = {"usage": None, "error": None, "updated": None}
 
-    def build_menu():
-        items = []
-        if usage[0]:
-            u = usage[0]
-            items.append(pystray.MenuItem(f"Session (5h):  {u['session_pct']}%  resets {u['session_reset']}", None, enabled=False))
-            items.append(pystray.MenuItem(f"Weekly (7d):   {u['weekly_pct']}%  resets {u['weekly_reset']}", None, enabled=False))
-            if u.get("sonnet_pct") is not None:
-                items.append(pystray.MenuItem(f"Sonnet only:   {u['sonnet_pct']}%  resets {u['sonnet_reset']}", None, enabled=False))
-        elif last_error[0]:
-            items.append(pystray.MenuItem(f"Error: {last_error[0]}", None, enabled=False))
+    def create_icon_pixmap(top_text, bottom_text=None, size=128):
+        """Create a two-line text icon as QPixmap.
+
+        top_text: session %, bottom_text: weekly %.
+        If bottom_text is None, shows top_text centered (for "..." or "ERR").
+        """
+        img = QImage(size, size, QImage.Format.Format_ARGB32)
+        img.fill(QColor(0, 0, 0, 0))
+
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Rounded rect background
+        painter.setBrush(QColor(45, 45, 45))
+        painter.setPen(Qt.PenStyle.NoPen)
+        r = size // 8
+        painter.drawRoundedRect(0, 0, size, size, r, r)
+
+        painter.setPen(QColor(255, 255, 255))
+
+        if bottom_text is None:
+            # Single centered text
+            font = QFont("DejaVu Sans", size // 3, QFont.Weight.Bold)
+            painter.setFont(font)
+            painter.drawText(0, 0, size, size, Qt.AlignmentFlag.AlignCenter, top_text)
         else:
-            items.append(pystray.MenuItem("Loading...", None, enabled=False))
-        items.append(pystray.Menu.SEPARATOR)
-        if last_updated[0]:
-            items.append(pystray.MenuItem(f"Updated {last_updated[0]}", None, enabled=False))
-            items.append(pystray.Menu.SEPARATOR)
-        items.append(pystray.MenuItem("Refresh Now", lambda: threading.Thread(target=poll_once, daemon=True).start()))
-        items.append(pystray.MenuItem("Open claude.ai usage", lambda: webbrowser.open(CLAUDE_SETTINGS_URL)))
-        items.append(pystray.MenuItem("Settings...", on_settings))
-        items.append(pystray.Menu.SEPARATOR)
-        items.append(pystray.MenuItem("Quit", on_quit))
-        return pystray.Menu(*items)
+            # Two lines — big numbers filling the icon
+            half = size // 2
+            font_size = size * 2 // 5
+            font = QFont("DejaVu Sans", font_size, QFont.Weight.Bold)
+            painter.setFont(font)
+
+            # Shrink if needed
+            for text in (top_text, bottom_text):
+                rect = painter.boundingRect(0, 0, size, half, Qt.AlignmentFlag.AlignCenter, text)
+                while rect.width() > size - 4 and font_size > 10:
+                    font_size -= 2
+                    font.setPointSize(font_size)
+                    painter.setFont(font)
+                    rect = painter.boundingRect(0, 0, size, half, Qt.AlignmentFlag.AlignCenter, text)
+
+            # Top line (session) — cyan-ish
+            painter.setPen(QColor(130, 210, 255))
+            painter.drawText(0, 2, size, half, Qt.AlignmentFlag.AlignCenter, top_text)
+            # Bottom line (weekly) — orange-ish
+            painter.setPen(QColor(255, 180, 80))
+            painter.drawText(0, half - 2, size, half, Qt.AlignmentFlag.AlignCenter, bottom_text)
+
+        painter.end()
+        return QPixmap.fromImage(img)
+
+    # --- Settings Dialog ---
+    class SettingsDialog(QDialog):
+        def __init__(self, cfg, first_run=False, parent=None):
+            super().__init__(parent)
+            self.cfg = cfg
+            self.result_config = None
+            self.setWindowTitle("Claude Usage Tray — Setup" if first_run else "Claude Usage Tray — Settings")
+            self.setMinimumWidth(500)
+
+            layout = QVBoxLayout(self)
+
+            if first_run:
+                welcome = QLabel("Welcome! Paste your Claude session cookie to get started.")
+                welcome.setStyleSheet("font-size: 14px; font-weight: bold; padding: 8px;")
+                welcome.setWordWrap(True)
+                layout.addWidget(welcome)
+
+            # Auth section
+            auth_group = QGroupBox("Authentication")
+            auth_layout = QVBoxLayout(auth_group)
+
+            instructions = QLabel(
+                "How to get your session cookie:\n"
+                "1. Open claude.ai in your browser and sign in\n"
+                "2. Open DevTools (F12 or Ctrl+Shift+I)\n"
+                "3. Go to Application > Cookies > https://claude.ai\n"
+                "4. Find 'sessionKey' and copy its value"
+            )
+            instructions.setStyleSheet("color: #888; padding: 4px;")
+            auth_layout.addWidget(instructions)
+
+            auth_layout.addWidget(QLabel("Session Cookie:"))
+            self.cookie_input = QLineEdit(cfg.get("session_cookie", ""))
+            self.cookie_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self.cookie_input.setPlaceholderText("Paste your sessionKey here...")
+            auth_layout.addWidget(self.cookie_input)
+
+            self.show_cookie = QCheckBox("Show cookie")
+            self.show_cookie.toggled.connect(
+                lambda checked: self.cookie_input.setEchoMode(
+                    QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
+                )
+            )
+            auth_layout.addWidget(self.show_cookie)
+
+            auto_label = QLabel("Organization ID is detected automatically.")
+            auto_label.setStyleSheet("color: #888; font-style: italic;")
+            auth_layout.addWidget(auto_label)
+
+            layout.addWidget(auth_group)
+
+            # Preferences section
+            pref_group = QGroupBox("Preferences")
+            pref_layout = QHBoxLayout(pref_group)
+            pref_layout.addWidget(QLabel("Refresh interval (minutes):"))
+            self.interval_spin = QSpinBox()
+            self.interval_spin.setRange(1, 60)
+            self.interval_spin.setValue(cfg.get("refresh_interval", 5))
+            pref_layout.addWidget(self.interval_spin)
+            pref_layout.addStretch()
+            layout.addWidget(pref_group)
+
+            # Buttons
+            btn_layout = QHBoxLayout()
+            btn_layout.addStretch()
+            cancel_btn = QPushButton("Quit" if first_run else "Cancel")
+            cancel_btn.clicked.connect(self.reject)
+            btn_layout.addWidget(cancel_btn)
+            save_btn = QPushButton("Save")
+            save_btn.setDefault(True)
+            save_btn.clicked.connect(self._on_save)
+            btn_layout.addWidget(save_btn)
+            layout.addLayout(btn_layout)
+
+        def _on_save(self):
+            cookie = self.cookie_input.text().strip()
+            if not cookie:
+                QMessageBox.warning(self, "Missing", "Please enter your session cookie.")
+                return
+            self.result_config = {
+                "session_cookie": cookie,
+                "refresh_interval": self.interval_spin.value(),
+            }
+            self.accept()
+
+    # --- Tray Icon ---
+    tray = QSystemTrayIcon()
+    tray.setIcon(QIcon(create_icon_pixmap("...")))
+    tray.setToolTip("Claude Usage Tray")
+
+    def update_menu():
+        menu = QMenu()
+        u = usage_data["usage"]
+        err = usage_data["error"]
+
+        if u:
+            session_action = menu.addAction(f"Session (5h):  {u['session_pct']}%  resets {u['session_reset']}")
+            session_action.setEnabled(False)
+            weekly_action = menu.addAction(f"Weekly (7d):   {u['weekly_pct']}%  resets {u['weekly_reset']}")
+            weekly_action.setEnabled(False)
+            if u.get("sonnet_pct") is not None:
+                sonnet_action = menu.addAction(f"Sonnet only:   {u['sonnet_pct']}%  resets {u['sonnet_reset']}")
+                sonnet_action.setEnabled(False)
+        elif err:
+            err_action = menu.addAction(f"Error: {err}")
+            err_action.setEnabled(False)
+        else:
+            loading_action = menu.addAction("Loading...")
+            loading_action.setEnabled(False)
+
+        menu.addSeparator()
+        if usage_data["updated"]:
+            updated_action = menu.addAction(f"Updated {usage_data['updated']}")
+            updated_action.setEnabled(False)
+            menu.addSeparator()
+
+        menu.addAction("Refresh Now", do_refresh)
+        menu.addAction("Open claude.ai usage", lambda: webbrowser.open(CLAUDE_SETTINGS_URL))
+        menu.addAction("Settings...", show_settings)
+        menu.addSeparator()
+        menu.addAction("Quit", app.quit)
+
+        tray.setContextMenu(menu)
 
     def update_icon():
-        if usage[0]:
-            text = f"{usage[0]['session_pct']}/{usage[0]['weekly_pct']}%"
-        elif last_error[0]:
-            text = "ERR"
+        u = usage_data["usage"]
+        if u:
+            tray.setIcon(QIcon(create_icon_pixmap(f"{u['session_pct']}%", f"{u['weekly_pct']}%")))
+            tray.setToolTip(
+                f"Session (5h): {u['session_pct']}% resets {u['session_reset']}\n"
+                f"Weekly (7d): {u['weekly_pct']}% resets {u['weekly_reset']}"
+            )
+        elif usage_data["error"]:
+            tray.setIcon(QIcon(create_icon_pixmap("ERR")))
+            tray.setToolTip(f"Error: {usage_data['error']}")
         else:
-            text = "..."
-        if icon_ref[0]:
-            icon_ref[0].icon = create_text_icon(text)
-            icon_ref[0].menu = build_menu()
+            tray.setIcon(QIcon(create_icon_pixmap("...")))
+            tray.setToolTip("Claude Usage Tray — loading...")
+        update_menu()
 
     def poll_once():
+        if not config.get("session_cookie"):
+            usage_data["error"] = "Not configured"
+            return
         try:
-            # Auto-detect org_id if missing
             if not config.get("org_id"):
                 config["org_id"] = fetch_org_id(config["session_cookie"])
                 save_config(config)
             data = fetch_usage(config["session_cookie"], config["org_id"])
-            usage[0] = parse_usage(data)
-            last_error[0] = None
-            last_updated[0] = datetime.now().strftime("%H:%M")
+            usage_data["usage"] = parse_usage(data)
+            usage_data["error"] = None
+            usage_data["updated"] = datetime.now().strftime("%H:%M")
         except AuthError as e:
-            usage[0] = None
-            last_error[0] = str(e)
+            usage_data["usage"] = None
+            usage_data["error"] = str(e)
         except Exception as e:
-            last_error[0] = str(e)
-        update_icon()
+            usage_data["error"] = str(e)
 
-    def poll_loop():
-        while not stop_event.is_set():
+    # Connect signal to UI update on main thread
+    refresh_signal.finished.connect(update_icon)
+
+    def do_refresh():
+        def _run():
             poll_once()
-            stop_event.wait(config.get("refresh_interval", 5) * 60)
+            # Signal the main thread to update the UI
+            refresh_signal.finished.emit()
+        threading.Thread(target=_run, daemon=True).start()
 
-    def on_settings(*args):
-        stop_event.set()
-        if icon_ref[0]:
-            icon_ref[0].stop()
-
-    def on_quit(*args):
-        quit_flag[0] = True
-        stop_event.set()
-        if icon_ref[0]:
-            icon_ref[0].stop()
+    def show_settings():
+        dlg = SettingsDialog(config)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_config:
+            config.update(dlg.result_config)
+            # Auto-detect org_id
+            try:
+                config["org_id"] = fetch_org_id(config["session_cookie"])
+            except Exception:
+                pass
+            save_config(config)
+            do_refresh()
 
     # First-run setup
     if not is_configured():
-        new_config = show_settings(config, first_run=True)
-        if new_config is None:
+        dlg = SettingsDialog(config, first_run=True)
+        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.result_config:
             sys.exit(0)
-        config.update(new_config)
+        config.update(dlg.result_config)
+        try:
+            config["org_id"] = fetch_org_id(config["session_cookie"])
+        except Exception:
+            pass
         save_config(config)
 
-    while True:
-        stop_event.clear()
-        icon = pystray.Icon("claude-usage-tray", icon=create_text_icon("..."), title="Claude Usage Tray", menu=build_menu())
-        icon_ref[0] = icon
-        poll_thread = threading.Thread(target=poll_loop, daemon=True)
-        icon.run(setup=lambda ic: poll_thread.start())
-        if quit_flag[0]:
-            break
-        new_config = show_settings(config)
-        if new_config:
-            config.update(new_config)
-            save_config(config)
+    update_menu()
+    tray.show()
+
+    # Initial refresh
+    do_refresh()
+
+    # Auto-refresh timer
+    timer = QTimer()
+    timer.timeout.connect(do_refresh)
+    timer.start(config.get("refresh_interval", 5) * 60 * 1000)
+
+    sys.exit(app.exec())
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +457,7 @@ def main():
     if sys.platform == "darwin":
         run_macos()
     else:
-        run_pystray()
+        run_qt()
 
 
 if __name__ == "__main__":
