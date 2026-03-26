@@ -70,7 +70,21 @@ jobs:
           --hidden-import pystray._win32
           claude_tray.py
 
-      - name: Upload artifact
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        run: |
+          cd dist
+          zip -r ${{ matrix.artifact }}.zip ${{ matrix.artifact }}.app
+
+      - name: Upload artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.zip
+
+      - name: Upload artifact (Linux/Windows)
+        if: runner.os != 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
