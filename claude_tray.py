@@ -367,6 +367,9 @@ def run_qt():
 
         tray.setContextMenu(menu)
 
+    RETRY_INTERVAL_MS = 60 * 1000  # 1 minute when in error state
+    timer = QTimer()
+
     def update_icon():
         u = usage_data["usage"]
         if u:
@@ -375,9 +378,16 @@ def run_qt():
                 f"Session (5h): {u['session_pct']}% resets {u['session_reset']}\n"
                 f"Weekly (7d): {u['weekly_pct']}% resets {u['weekly_reset']}"
             )
+            # Recovered — restore normal interval
+            normal_ms = config.get("refresh_interval", 5) * 60 * 1000
+            if timer.interval() != normal_ms:
+                timer.start(normal_ms)
         elif usage_data["error"]:
             tray.setIcon(QIcon(create_icon_pixmap("ERR")))
             tray.setToolTip(f"Error: {usage_data['error']}")
+            # Error — retry faster
+            if timer.interval() != RETRY_INTERVAL_MS:
+                timer.start(RETRY_INTERVAL_MS)
         else:
             tray.setIcon(QIcon(create_icon_pixmap("...")))
             tray.setToolTip("Claude Usage Tray — loading...")
@@ -442,7 +452,6 @@ def run_qt():
     do_refresh()
 
     # Auto-refresh timer
-    timer = QTimer()
     timer.timeout.connect(do_refresh)
     timer.start(config.get("refresh_interval", 5) * 60 * 1000)
 
