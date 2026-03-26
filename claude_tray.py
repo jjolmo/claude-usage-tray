@@ -56,6 +56,8 @@ def run_macos():
             if self._needs_setup:
                 self._needs_setup = False
                 self.open_settings(None)
+                timer.interval = self.config.get("refresh_interval", 5) * 60
+                return  # open_settings already started a background refresh
             timer.interval = self.config.get("refresh_interval", 5) * 60
             if not self.config.get("session_cookie"):
                 return
