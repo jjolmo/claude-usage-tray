@@ -97,7 +97,11 @@ You can also change the **refresh interval** (1–60 minutes) from Settings.
 
 ## Platform notes
 
-- **macOS**: You may need to allow the app in System Settings > Privacy & Security
+- **macOS**: The binary is not signed, so macOS will block it. Remove the quarantine attribute before running:
+  ```bash
+  xattr -d com.apple.quarantine claude-usage-tray-macos.app
+  ```
+  You may also need to allow the app in **System Settings > Privacy & Security**
 - **Linux (KDE)**: Works via StatusNotifierItem (SNI) protocol. Needs `libappindicator`
 - **Windows**: May show a SmartScreen warning on first run — click "More info" > "Run anyway"
 
