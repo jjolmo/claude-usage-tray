@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Linux dependencies
+      - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -43,30 +43,45 @@ jobs:
             libgirepository1.0-dev \
             python3-tk
 
-      - name: Install Python dependencies
+      - name: Install Python dependencies (macOS)
+        if: runner.os == 'macOS'
         run: |
-          pip install -r requirements.txt
-          pip install pyinstaller
+          pip install platformdirs rumps pyinstaller
 
-      - name: Build with PyInstaller (Unix)
-        if: runner.os != 'Windows'
+      - name: Install Python dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          pip install platformdirs pystray Pillow pyinstaller
+
+      - name: Install Python dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          pip install platformdirs pystray Pillow pyinstaller
+
+      - name: Build with PyInstaller (macOS)
+        if: runner.os == 'macOS'
         run: >
-          pyinstaller ${{ matrix.pyinstaller_args }}
+          pyinstaller --windowed --onefile
           --name ${{ matrix.artifact }}
           --add-data "assets:assets"
-          --hidden-import pystray._darwin
+          claude_tray.py
+
+      - name: Build with PyInstaller (Linux)
+        if: runner.os == 'Linux'
+        run: >
+          pyinstaller --onefile
+          --name ${{ matrix.artifact }}
+          --add-data "assets:assets"
           --hidden-import pystray._linux
-          --hidden-import pystray._win32
+          --hidden-import pystray._xorg
           claude_tray.py
 
       - name: Build with PyInstaller (Windows)
         if: runner.os == 'Windows'
         run: >
-          pyinstaller ${{ matrix.pyinstaller_args }}
+          pyinstaller --windowed --onefile
           --name ${{ matrix.artifact }}
           --add-data "assets;assets"
-          --hidden-import pystray._darwin
-          --hidden-import pystray._linux
           --hidden-import pystray._win32
           claude_tray.py
 

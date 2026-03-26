@@ -1,3 +1,4 @@
-pystray>=0.19.5
-Pillow>=10.0.0
 platformdirs>=4.0.0
+pystray>=0.19.5; sys_platform != 'darwin'
+Pillow>=10.0.0; sys_platform != 'darwin'
+rumps>=0.4.0; sys_platform == 'darwin'
