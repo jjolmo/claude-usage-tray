@@ -61,4 +61,4 @@ def save_config(config: dict) -> None:
 
 def is_configured() -> bool:
     config = load_config()
-    return bool(config.get("session_cookie")) and bool(config.get("org_id"))
+    return bool(config.get("session_cookie"))

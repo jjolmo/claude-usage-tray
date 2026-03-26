@@ -17,6 +17,7 @@ class APIError(Exception):
 
 SSL_CTX = ssl.create_default_context()
 
+ORGS_URL = "https://claude.ai/api/organizations"
 USAGE_URL = "https://claude.ai/api/organizations/{org_id}/usage"
 
 HEADERS = {
@@ -37,18 +38,12 @@ HEADERS = {
 }
 
 
-def fetch_usage(session_cookie: str, org_id: str) -> dict:
-    """Fetch usage data from claude.ai.
-
-    Returns the raw JSON response dict.
-    Raises AuthError on 401/403, APIError on other failures.
-    """
-    url = USAGE_URL.format(org_id=org_id)
+def _api_get(url: str, session_cookie: str):
+    """Make an authenticated GET request to claude.ai."""
     req = urllib.request.Request(url)
     req.add_header("Cookie", f"sessionKey={session_cookie}")
     for key, val in HEADERS.items():
         req.add_header(key, val)
-
     try:
         with urllib.request.urlopen(req, timeout=15, context=SSL_CTX) as resp:
             return json.loads(resp.read().decode())
@@ -58,6 +53,30 @@ def fetch_usage(session_cookie: str, org_id: str) -> dict:
         raise APIError(f"HTTP {e.code}")
     except Exception as e:
         raise APIError(str(e))
+
+
+def fetch_org_id(session_cookie: str) -> str:
+    """Auto-detect the organization ID from the session cookie.
+
+    Returns the UUID of the first organization found.
+    Raises AuthError/APIError on failure.
+    """
+    data = _api_get(ORGS_URL, session_cookie)
+    if isinstance(data, list) and len(data) > 0:
+        org_id = data[0].get("uuid") or data[0].get("id", "")
+        if org_id:
+            return org_id
+    raise APIError("Could not detect organization ID from your account.")
+
+
+def fetch_usage(session_cookie: str, org_id: str) -> dict:
+    """Fetch usage data from claude.ai.
+
+    Returns the raw JSON response dict.
+    Raises AuthError on 401/403, APIError on other failures.
+    """
+    url = USAGE_URL.format(org_id=org_id)
+    return _api_get(url, session_cookie)
 
 
 def parse_usage(data: dict) -> dict:
