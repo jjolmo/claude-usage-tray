@@ -63,7 +63,14 @@ def run_macos():
         def open_settings(self, _):
             # Cookie
             w = rumps.Window(
-                message="Paste your sessionKey cookie from claude.ai DevTools:",
+                message=(
+                    "How to get your session cookie:\n\n"
+                    "1. Open claude.ai in Chrome/Safari and sign in\n"
+                    "2. Open DevTools (F12 or Cmd+Opt+I)\n"
+                    "3. Go to Application tab > Cookies > claude.ai\n"
+                    "4. Find 'sessionKey' and copy its Value\n\n"
+                    "Paste it below:"
+                ),
                 title="Session Cookie",
                 default_text=self.config.get("session_cookie", ""),
                 ok="Next",
@@ -77,7 +84,13 @@ def run_macos():
 
             # Org ID
             w = rumps.Window(
-                message="Enter your Organization ID (UUID from claude.ai URL):",
+                message=(
+                    "How to get your Organization ID:\n\n"
+                    "1. Go to claude.ai/settings\n"
+                    "2. Look at the URL bar — it contains your org UUID\n"
+                    "   Example: claude.ai/settings/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\n\n"
+                    "Paste the UUID below:"
+                ),
                 title="Organization ID",
                 default_text=self.config.get("org_id", ""),
                 ok="Next",
