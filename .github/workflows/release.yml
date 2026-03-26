@@ -39,9 +39,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            gir1.2-appindicator3-0.1 \
-            libgirepository1.0-dev \
-            python3-tk
+            libegl1 \
+            libxkbcommon0
 
       - name: Install Python dependencies (macOS)
         if: runner.os == 'macOS'
@@ -51,7 +50,7 @@ jobs:
       - name: Install Python dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          pip install platformdirs pystray Pillow pyinstaller
+          pip install platformdirs PyQt6 Pillow pyinstaller
 
       - name: Install Python dependencies (Windows)
         if: runner.os == 'Windows'
@@ -72,8 +71,9 @@ jobs:
           pyinstaller --onefile
           --name ${{ matrix.artifact }}
           --add-data "assets:assets"
-          --hidden-import pystray._linux
-          --hidden-import pystray._xorg
+          --hidden-import PyQt6.QtWidgets
+          --hidden-import PyQt6.QtGui
+          --hidden-import PyQt6.QtCore
           claude_tray.py
 
       - name: Build with PyInstaller (Windows)
