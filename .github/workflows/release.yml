@@ -11,6 +11,7 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
@@ -47,15 +48,27 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build with PyInstaller
-        run: |
-          pyinstaller ${{ matrix.pyinstaller_args }} \
-            --name ${{ matrix.artifact }} \
-            --add-data "assets:assets" \
-            --hidden-import pystray._darwin \
-            --hidden-import pystray._linux \
-            --hidden-import pystray._win32 \
-            claude_tray.py
+      - name: Build with PyInstaller (Unix)
+        if: runner.os != 'Windows'
+        run: >
+          pyinstaller ${{ matrix.pyinstaller_args }}
+          --name ${{ matrix.artifact }}
+          --add-data "assets:assets"
+          --hidden-import pystray._darwin
+          --hidden-import pystray._linux
+          --hidden-import pystray._win32
+          claude_tray.py
+
+      - name: Build with PyInstaller (Windows)
+        if: runner.os == 'Windows'
+        run: >
+          pyinstaller ${{ matrix.pyinstaller_args }}
+          --name ${{ matrix.artifact }}
+          --add-data "assets;assets"
+          --hidden-import pystray._darwin
+          --hidden-import pystray._linux
+          --hidden-import pystray._win32
+          claude_tray.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
