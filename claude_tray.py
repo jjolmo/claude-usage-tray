@@ -43,15 +43,20 @@ def run_macos():
                 None,
                 rumps.MenuItem("Open claude.ai usage", callback=self.open_usage),
                 rumps.MenuItem("Refresh now", callback=self.manual_refresh),
-                rumps.MenuItem("Settings...", callback=self.open_settings),
+                rumps.MenuItem("Set refresh interval...", callback=self.set_interval),
+                rumps.MenuItem("Update session cookie...", callback=self.open_settings),
             ]
 
-            threading.Thread(target=self._refresh, daemon=True).start()
+            if not is_configured():
+                # Show settings dialog on first launch after a short delay
+                threading.Timer(1.0, lambda: self.open_settings(None)).start()
+            else:
+                threading.Thread(target=self._refresh, daemon=True).start()
 
         @rumps.timer(300)
         def auto_refresh(self, _):
-            interval = self.config.get("refresh_interval", 5) * 60
-            # rumps timer is fixed at creation, so we just re-schedule
+            if not self.config.get("session_cookie"):
+                return
             threading.Thread(target=self._refresh, daemon=True).start()
 
         def manual_refresh(self, _):
@@ -61,7 +66,6 @@ def run_macos():
             webbrowser.open(CLAUDE_SETTINGS_URL)
 
         def open_settings(self, _):
-            # Cookie
             w = rumps.Window(
                 message=(
                     "How to get your session cookie:\n\n"
@@ -69,11 +73,12 @@ def run_macos():
                     "2. Open DevTools (F12 or Cmd+Opt+I)\n"
                     "3. Go to Application tab > Cookies > claude.ai\n"
                     "4. Find 'sessionKey' and copy its Value\n\n"
-                    "Paste it below:"
+                    "Paste your sessionKey below and click Save.\n"
+                    "The Organization ID will be detected automatically."
                 ),
-                title="Session Cookie",
+                title="Claude Usage Tray — Settings",
                 default_text=self.config.get("session_cookie", ""),
-                ok="Next",
+                ok="Save",
                 cancel="Cancel",
                 dimensions=(400, 100),
             )
@@ -81,15 +86,26 @@ def run_macos():
             if not r.clicked:
                 return
             cookie = r.text.strip()
+            if not cookie:
+                rumps.alert("No cookie entered. Settings not saved.")
+                return
 
             # Auto-detect org ID
             org_id = self.config.get("org_id", "")
             try:
                 org_id = fetch_org_id(cookie)
             except Exception as e:
-                rumps.alert(f"Could not auto-detect org ID: {e}\n\nUsing previous value.")
+                if not org_id:
+                    rumps.alert(f"Could not detect org ID: {e}")
+                    return
 
-            # Refresh interval
+            self.config["session_cookie"] = cookie
+            self.config["org_id"] = org_id
+            save_config(self.config)
+            rumps.notification("Claude Usage Tray", "Settings saved", "Refreshing now...")
+            threading.Thread(target=self._refresh, daemon=True).start()
+
+        def set_interval(self, _):
             w = rumps.Window(
                 message="Refresh interval in minutes (1-60):",
                 title="Refresh Interval",
@@ -104,14 +120,10 @@ def run_macos():
             try:
                 interval = max(1, min(60, int(r.text.strip())))
             except ValueError:
-                interval = 5
-
-            self.config["session_cookie"] = cookie
-            self.config["org_id"] = org_id
+                return
             self.config["refresh_interval"] = interval
             save_config(self.config)
-            rumps.notification("Claude Usage Tray", "Settings saved", "Refreshing now...")
-            threading.Thread(target=self._refresh, daemon=True).start()
+            rumps.notification("Claude Usage Tray", "Interval updated", f"Refreshing every {interval} min")
 
         def _refresh(self):
             if not self.config.get("session_cookie"):
@@ -152,11 +164,6 @@ def run_macos():
             elif self.last_error:
                 self.title = "ERR"
                 self.session_item.title = f"Error: {self.last_error}"
-
-    # First-run: if no config, show settings on launch
-    if not is_configured():
-        # Create app, it will show "Setup" until user configures
-        pass
 
     ClaudeUsageApp().run()
 
@@ -248,6 +255,10 @@ def run_pystray():
 
     def poll_once():
         try:
+            # Auto-detect org_id if missing
+            if not config.get("org_id"):
+                config["org_id"] = fetch_org_id(config["session_cookie"])
+                save_config(config)
             data = fetch_usage(config["session_cookie"], config["org_id"])
             usage[0] = parse_usage(data)
             last_error[0] = None
