@@ -1,9 +1,22 @@
 #!/bin/bash
+
+show_error() {
+  osascript -e "display dialog \"$1\" with title \"Claude Usage Tray\" buttons {\"OK\"} default button 1 with icon stop" 2>/dev/null
+  exit 1
+}
+
+# Check python3 is available
+if ! command -v python3 &>/dev/null; then
+  show_error "Python 3 is required but not installed.\n\nInstall Xcode Command Line Tools:\n  xcode-select --install"
+fi
+
 DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
 VENV="$HOME/.claude-usage-tray-venv"
+
 if [ ! -d "$VENV" ]; then
-  python3 -m venv "$VENV"
-  "$VENV/bin/pip" install --quiet platformdirs rumps certifi
+  python3 -m venv "$VENV" || show_error "Failed to create Python virtual environment."
+  "$VENV/bin/pip" install --quiet platformdirs rumps certifi || show_error "Failed to install dependencies."
 fi
+
 cd "$DIR"
 exec "$VENV/bin/python" claude_tray.py
