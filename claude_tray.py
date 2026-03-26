@@ -92,19 +92,20 @@ def run_macos():
                 rumps.alert("No cookie entered. Settings not saved.")
                 return
 
-            org_id = self.config.get("org_id", "")
-            try:
-                org_id = fetch_org_id(cookie)
-            except Exception as e:
-                if not org_id:
-                    rumps.alert(f"Could not detect org ID: {e}")
-                    return
-
             self.config["session_cookie"] = cookie
-            self.config["org_id"] = org_id
             save_config(self.config)
-            rumps.notification("Claude Usage Tray", "Settings saved", "Refreshing now...")
-            threading.Thread(target=self._refresh, daemon=True).start()
+            self.title = "..."
+            self.session_item.title = "Connecting..."
+
+            def _detect_and_refresh():
+                try:
+                    self.config["org_id"] = fetch_org_id(cookie)
+                    save_config(self.config)
+                except Exception:
+                    pass
+                self._refresh()
+
+            threading.Thread(target=_detect_and_refresh, daemon=True).start()
 
         def set_interval(self, _):
             w = rumps.Window(
