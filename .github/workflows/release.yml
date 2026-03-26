@@ -19,48 +19,11 @@ jobs:
           APP="claude-usage-tray-macos.app"
           mkdir -p "$APP/Contents/MacOS"
           mkdir -p "$APP/Contents/Resources/assets"
-
-          # Copy source files
+          cp macos/run "$APP/Contents/MacOS/run"
+          chmod +x "$APP/Contents/MacOS/run"
+          cp macos/Info.plist "$APP/Contents/Info.plist"
           cp claude_tray.py config.py usage_api.py settings_dialog.py "$APP/Contents/Resources/"
           cp assets/icon.png "$APP/Contents/Resources/assets/"
-
-          # Create launcher script
-          cat > "$APP/Contents/MacOS/run" << 'LAUNCHER'
-          #!/bin/bash
-          DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
-          VENV="$HOME/.claude-usage-tray-venv"
-          if [ ! -d "$VENV" ]; then
-            python3 -m venv "$VENV"
-            "$VENV/bin/pip" install --quiet platformdirs rumps certifi
-          fi
-          cd "$DIR"
-          exec "$VENV/bin/python" claude_tray.py
-          LAUNCHER
-          # Fix indentation from heredoc
-          sed -i '' 's/^          //' "$APP/Contents/MacOS/run"
-          chmod +x "$APP/Contents/MacOS/run"
-
-          # Create Info.plist
-          cat > "$APP/Contents/Info.plist" << 'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleExecutable</key>
-            <string>run</string>
-            <key>CFBundleIdentifier</key>
-            <string>com.claude-usage-tray</string>
-            <key>CFBundleName</key>
-            <string>Claude Usage Tray</string>
-            <key>CFBundleVersion</key>
-            <string>1.0</string>
-            <key>LSUIElement</key>
-            <true/>
-          </dict>
-          </plist>
-          PLIST
-          sed -i '' 's/^          //' "$APP/Contents/Info.plist"
-
           zip -r claude-usage-tray-macos.zip "$APP"
 
       - name: Upload artifact
