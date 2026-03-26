@@ -24,7 +24,7 @@ jobs:
           cp macos/Info.plist "$APP/Contents/Info.plist"
           cp claude_tray.py config.py usage_api.py settings_dialog.py "$APP/Contents/Resources/"
           cp assets/icon.png "$APP/Contents/Resources/assets/"
-          zip -r claude-usage-tray-macos.zip "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" claude-usage-tray-macos.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
