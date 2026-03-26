@@ -190,25 +190,30 @@ def run_pystray():
                 continue
         return ImageFont.load_default()
 
-    def create_text_icon(text, size=64):
+    def create_text_icon(text, size=128):
+        # Solid dark background — transparent icons don't work on KDE/AppIndicator
+        bg_color = (45, 45, 45, 255)
+        text_color = (255, 255, 255, 255)
+
         img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        font_size = size // 2
+
+        # Rounded rectangle background
+        r = size // 8
+        draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=r, fill=bg_color)
+
+        font_size = size // 3
         font = _get_font(font_size)
         bbox = draw.textbbox((0, 0), text, font=font)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        while tw > size - 4 and font_size > 8:
+        while tw > size - 8 and font_size > 10:
             font_size -= 2
             font = _get_font(font_size)
             bbox = draw.textbbox((0, 0), text, font=font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         x = (size - tw) // 2 - bbox[0]
         y = (size - th) // 2 - bbox[1]
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                if dx or dy:
-                    draw.text((x + dx, y + dy), text, fill=(0, 0, 0, 200), font=font)
-        draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
+        draw.text((x, y), text, fill=text_color, font=font)
         return img
 
     config = load_config()
