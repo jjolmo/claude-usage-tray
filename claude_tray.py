@@ -139,9 +139,13 @@ def run_macos():
                 try:
                     self.config["org_id"] = fetch_org_id(self.config["session_cookie"])
                     save_config(self.config)
-                except Exception:
-                    self.title = "Setup"
-                    self.session_item.title = "Click Settings to configure"
+                except Exception as e:
+                    # Surface the real failure instead of silently falling
+                    # back to "Setup" — the cookie may be saved and valid.
+                    self.usage = None
+                    self.last_error = str(e)
+                    from PyObjCTools import AppHelper
+                    AppHelper.callAfter(self._apply_ui)
                     return
 
             try:
@@ -154,6 +158,12 @@ def run_macos():
             except (APIError, Exception) as e:
                 self.last_error = str(e)
 
+            # AppKit only renders UI mutations made on the main thread; this
+            # runs on a worker thread, so marshal the update via callAfter.
+            from PyObjCTools import AppHelper
+            AppHelper.callAfter(self._apply_ui)
+
+        def _apply_ui(self):
             if self.usage:
                 u = self.usage
                 self.title = f"{u['session_pct']}/{u['weekly_pct']}%"
