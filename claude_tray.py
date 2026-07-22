@@ -22,6 +22,15 @@ CLAUDE_SETTINGS_URL = "https://claude.ai/settings/usage"
 def run_macos():
     import rumps
 
+    # The bundled .app hides the Dock icon via LSUIElement in Info.plist, but
+    # running from source shows a Python icon in the Dock; hide it by making
+    # the process an accessory (menu-bar-only) app.
+    try:
+        from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+        NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    except Exception:
+        pass
+
     class ClaudeUsageApp(rumps.App):
         def __init__(self):
             super().__init__("Claude", title="...")
