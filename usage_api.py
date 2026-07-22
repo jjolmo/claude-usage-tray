@@ -48,7 +48,38 @@ HEADERS = {
 
 
 def _api_get(url: str, session_cookie: str):
-    """Make an authenticated GET request to claude.ai."""
+    """Make an authenticated GET request to claude.ai.
+
+    claude.ai sits behind Cloudflare bot detection, which rejects urllib's TLS
+    fingerprint with an HTML challenge (HTTP 403) regardless of the cookie, so
+    requests must go through curl_cffi impersonating a real browser.
+    """
+    try:
+        from curl_cffi import requests as cf_requests
+    except ImportError:
+        return _api_get_urllib(url, session_cookie)
+    try:
+        resp = cf_requests.get(
+            url,
+            headers=HEADERS,
+            cookies={"sessionKey": session_cookie},
+            impersonate="chrome",
+            timeout=15,
+        )
+    except Exception as e:
+        raise APIError(str(e))
+    if resp.status_code in (401, 403):
+        raise AuthError(f"Authentication failed (HTTP {resp.status_code}). Update your session cookie.")
+    if resp.status_code >= 400:
+        raise APIError(f"HTTP {resp.status_code}")
+    try:
+        return resp.json()
+    except Exception as e:
+        raise APIError(f"Invalid JSON response: {e}")
+
+
+def _api_get_urllib(url: str, session_cookie: str):
+    """urllib fallback when curl_cffi is unavailable (likely blocked by Cloudflare)."""
     req = urllib.request.Request(url)
     req.add_header("Cookie", f"sessionKey={session_cookie}")
     for key, val in HEADERS.items():
@@ -103,8 +134,10 @@ def parse_usage(data: dict) -> dict:
     """
     result = {}
 
-    five_hour = data.get("five_hour", {})
-    seven_day = data.get("seven_day", {})
+    # The API returns null (not a missing key) for windows with no usage —
+    # e.g. no active 5-hour session — so guard beyond .get()'s default.
+    five_hour = data.get("five_hour") or {}
+    seven_day = data.get("seven_day") or {}
     sonnet = data.get("seven_day_sonnet")
 
     result["session_pct"] = int(five_hour.get("utilization", 0))
