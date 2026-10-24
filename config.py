@@ -18,6 +18,8 @@ DEFAULTS = {
     "session_cookie": "",
     "org_id": "",
     "refresh_interval": 5,
+    # {org_id: {"label", "track", "cookie"?}}; see usage_cache.
+    "accounts": {},
 }
 
 
@@ -61,4 +63,4 @@ def save_config(config: dict) -> None:
 
 def is_configured() -> bool:
     config = load_config()
-    return bool(config.get("session_cookie"))
+    return bool(config.get("session_cookie") or config.get("accounts"))

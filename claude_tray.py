@@ -11,6 +11,8 @@ from datetime import datetime
 
 from config import load_config, save_config, is_configured
 from usage_api import fetch_usage, fetch_org_id, parse_usage, AuthError, APIError
+import usage_cache
+import budget
 
 CLAUDE_SETTINGS_URL = "https://claude.ai/settings/usage"
 
@@ -199,7 +201,8 @@ def run_qt():
         QApplication, QSystemTrayIcon, QMenu, QDialog,
         QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
         QSpinBox, QPushButton, QGroupBox, QCheckBox,
-        QMessageBox,
+        QMessageBox, QComboBox, QFormLayout, QTableWidget, QTableWidgetItem,
+        QHeaderView, QAbstractItemView,
     )
     from PyQt6.QtGui import QIcon, QImage, QPainter, QColor, QFont, QPixmap, QAction
     from PyQt6.QtCore import QTimer, Qt, QSize, QObject, pyqtSignal
@@ -215,7 +218,7 @@ def run_qt():
     refresh_signal = RefreshSignal()
 
     config = load_config()
-    usage_data = {"usage": None, "error": None, "updated": None}
+    usage_data = {"usage": None, "error": None, "updated": None, "budget": None}
 
     def create_icon_pixmap(top_text, bottom_text=None, size=128):
         """Create a two-line text icon as QPixmap.
@@ -275,7 +278,7 @@ def run_qt():
             self.cfg = cfg
             self.result_config = None
             self.setWindowTitle("Claude Usage Tray — Setup" if first_run else "Claude Usage Tray — Settings")
-            self.setMinimumWidth(500)
+            self.setMinimumWidth(640)
 
             layout = QVBoxLayout(self)
 
@@ -330,6 +333,12 @@ def run_qt():
             pref_layout.addStretch()
             layout.addWidget(pref_group)
 
+            layout.addWidget(self._accounts_group())
+
+            self.guard_widgets = None
+            if budget.available():
+                layout.addWidget(self._guard_group())
+
             # Buttons
             btn_layout = QHBoxLayout()
             btn_layout.addStretch()
@@ -342,14 +351,221 @@ def run_qt():
             btn_layout.addWidget(save_btn)
             layout.addLayout(btn_layout)
 
+        def _accounts_group(self):
+            group = QGroupBox("Accounts")
+            box = QVBoxLayout(group)
+            note = QLabel("Accounts logged into a Claude Desktop profile show up here on their own. "
+                          "Add others by organization ID: with a session cookie the tray fetches their "
+                          "usage, without one they count as unused until they appear in a profile.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color: #888;")
+            box.addWidget(note)
+
+            table = QTableWidget(0, 4)
+            table.setHorizontalHeaderLabels(["Track", "Name", "Organization ID", "Now"])
+            table.verticalHeader().setVisible(False)
+            table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            header = table.horizontalHeader()
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+            table.setColumnWidth(1, 110)
+            self.accounts_table = table
+            cache = usage_cache.load().get("accounts", {})
+            for org, acc in self.cfg.get("accounts", {}).items():
+                self._add_row(org, acc, cache.get(org, {}))
+            box.addWidget(table)
+
+            buttons = QHBoxLayout()
+            add_btn = QPushButton("Add by ID…")
+            add_btn.clicked.connect(self._add_account)
+            remove_btn = QPushButton("Remove")
+            remove_btn.clicked.connect(self._remove_account)
+            buttons.addWidget(add_btn)
+            buttons.addWidget(remove_btn)
+            buttons.addStretch()
+            box.addLayout(buttons)
+            return group
+
+        def _add_row(self, org, acc, cached):
+            table = self.accounts_table
+            row = table.rowCount()
+            table.insertRow(row)
+            track = QTableWidgetItem()
+            track.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            track.setCheckState(Qt.CheckState.Checked if acc.get("track", True) else Qt.CheckState.Unchecked)
+            # The row keeps the account's stored fields (e.g. its cookie) for saving.
+            track.setData(Qt.ItemDataRole.UserRole, (org, dict(acc), list(cached.get("profiles") or [])))
+            table.setItem(row, 0, track)
+            table.setItem(row, 1, QTableWidgetItem(acc.get("label") or org[:8]))
+            for col, text in ((2, org), (3, self._now_text(acc, cached))):
+                item = QTableWidgetItem(text)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                table.setItem(row, col, item)
+
+        @staticmethod
+        def _now_text(acc, cached):
+            parts = []
+            active = cached.get("active") or {}
+            if active.get("sessions"):
+                parts.append(f"{active['sessions']} sessions")
+            if active.get("desktop"):
+                parts.append("Desktop")
+            if not parts:
+                profiles = cached.get("profiles") or []
+                if profiles:
+                    parts.append("profile " + ", ".join(profiles))
+                elif acc.get("cookie"):
+                    parts.append("manual cookie")
+                else:
+                    parts.append("no data yet")
+            return " · ".join(parts)
+
+        def _table_accounts(self):
+            accounts = {}
+            table = self.accounts_table
+            for row in range(table.rowCount()):
+                track = table.item(row, 0)
+                org, acc, _ = track.data(Qt.ItemDataRole.UserRole)
+                acc["track"] = track.checkState() == Qt.CheckState.Checked
+                acc["label"] = table.item(row, 1).text().strip() or org[:8]
+                accounts[org] = acc
+            return accounts
+
+        def _tracked_count(self):
+            return sum(a["track"] for a in self._table_accounts().values())
+
+        def _add_account(self):
+            import re
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Add account")
+            form = QFormLayout(dlg)
+            org_in = QLineEdit()
+            org_in.setPlaceholderText("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+            name_in = QLineEdit()
+            cookie_in = QLineEdit()
+            cookie_in.setEchoMode(QLineEdit.EchoMode.Password)
+            cookie_in.setPlaceholderText("optional sessionKey")
+            form.addRow("Organization ID:", org_in)
+            form.addRow("Name:", name_in)
+            form.addRow("Session cookie:", cookie_in)
+            hint = QLabel("The ID is in claude.ai/settings URLs, or CLAUDE_CODE_ORGANIZATION_UUID "
+                          "in a Claude Code session.")
+            hint.setWordWrap(True)
+            hint.setStyleSheet("color: #888;")
+            form.addRow(hint)
+            row = QHBoxLayout()
+            row.addStretch()
+            ok = QPushButton("Add")
+            ok.setDefault(True)
+            ok.clicked.connect(dlg.accept)
+            cancel = QPushButton("Cancel")
+            cancel.clicked.connect(dlg.reject)
+            row.addWidget(cancel)
+            row.addWidget(ok)
+            form.addRow(row)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            org = re.sub(r"^org_", "", org_in.text().strip().lower())
+            if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", org):
+                QMessageBox.warning(self, "Invalid ID", "That doesn't look like an organization ID (a UUID).")
+                return
+            if org in self._table_accounts():
+                QMessageBox.information(self, "Already there", "That account is already in the list.")
+                return
+            acc = {"label": name_in.text().strip() or org[:8], "track": True}
+            if cookie_in.text().strip():
+                acc["cookie"] = cookie_in.text().strip()
+            self._add_row(org, acc, {})
+
+        def _remove_account(self):
+            table = self.accounts_table
+            row = table.currentRow()
+            if row < 0:
+                return
+            org, acc, profiles = table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            if profiles:
+                QMessageBox.information(
+                    self, "Logged into Desktop",
+                    f"This account is logged into the Claude Desktop profile {', '.join(profiles)} "
+                    "and would come back on the next refresh. Untick Track to ignore it.")
+                return
+            table.removeRow(row)
+
+        def _guard_group(self):
+            g = budget.load_guard_config()
+            group = QGroupBox("Daily budget (Claude Code usage guard)")
+            form = QFormLayout(group)
+
+            enabled = QCheckBox("Stop for the day when weekly usage runs ahead of pace")
+            enabled.setChecked(bool(g["enabled"]))
+            form.addRow(enabled)
+
+            mode = QComboBox()
+            mode.addItem("Block tools until the next day", "block")
+            mode.addItem("Only warn", "warn")
+            mode.setCurrentIndex(max(0, mode.findData(g["mode"])))
+            form.addRow("When the budget is spent:", mode)
+
+            def spin(lo, hi, value, suffix=""):
+                box = QSpinBox()
+                box.setRange(lo, hi)
+                box.setValue(int(value))
+                box.setSuffix(suffix)
+                return box
+
+            target = spin(10, 100, g["target_pct"], " %")
+            day_start = spin(0, 23, g["day_start_hour"], ":00")
+            warn = spin(0, 50, g["warn_margin"], " %")
+            form.addRow("Weekly target per account:", target)
+            form.addRow("Day starts at:", day_start)
+            form.addRow("Warn when less than this is left today:", warn)
+            floor = spin(1, 10, g["accounts"])
+            floor.setToolTip("Accounts not in the list yet still count, up to this number.")
+            form.addRow("Budget counts at least this many accounts:", floor)
+
+            hint = QLabel("")
+            hint.setStyleSheet("color: #888;")
+            def update_hint():
+                n = max(self._tracked_count(), floor.value())
+                daily = n * target.value() / 7
+                hint.setText(f"{n} account(s) = {daily:.0f}% of one account per day; "
+                             "unused budget rolls over.")
+            target.valueChanged.connect(update_hint)
+            floor.valueChanged.connect(update_hint)
+            self.accounts_table.itemChanged.connect(lambda _: update_hint())
+            update_hint()
+            form.addRow(hint)
+
+            self.guard_widgets = {"enabled": enabled, "mode": mode, "target_pct": target,
+                                  "day_start_hour": day_start, "warn_margin": warn, "accounts": floor}
+            return group
+
+        def _guard_values(self):
+            w = self.guard_widgets
+            return {
+                "enabled": w["enabled"].isChecked(),
+                "mode": w["mode"].currentData(),
+                "target_pct": w["target_pct"].value(),
+                "day_start_hour": w["day_start_hour"].value(),
+                "warn_margin": w["warn_margin"].value(),
+                "accounts": w["accounts"].value(),
+            }
+
         def _on_save(self):
             cookie = self.cookie_input.text().strip()
-            if not cookie:
-                QMessageBox.warning(self, "Missing", "Please enter your session cookie.")
+            accounts = self._table_accounts()
+            if not cookie and not accounts:
+                QMessageBox.warning(self, "Missing", "Log into Claude Desktop, add an account, "
+                                    "or paste your session cookie.")
                 return
+            if self.guard_widgets:
+                budget.save_guard_config(self._guard_values())
             self.result_config = {
                 "session_cookie": cookie,
                 "refresh_interval": self.interval_spin.value(),
+                "accounts": accounts,
             }
             self.accept()
 
@@ -363,7 +579,14 @@ def run_qt():
         u = usage_data["usage"]
         err = usage_data["error"]
 
-        if u:
+        budget_lines = budget.summary_lines(usage_data["budget"])
+        if budget_lines:
+            for line in budget_lines:
+                if line:
+                    menu.addAction(line).setEnabled(False)
+                else:
+                    menu.addSeparator()
+        elif u:
             session_action = menu.addAction(f"Session (5h):  {u['session_pct']}%  resets {u['session_reset']}")
             session_action.setEnabled(False)
             weekly_action = menu.addAction(f"Weekly (7d):   {u['weekly_pct']}%  resets {u['weekly_reset']}")
@@ -395,14 +618,28 @@ def run_qt():
     RETRY_INTERVAL_MS = 60 * 1000  # 1 minute when in error state
     timer = QTimer()
 
+    def active_account():
+        """The account the icon shows: the one most in use right now."""
+        st = usage_data["budget"]
+        if not st or not st["accounts"]:
+            return None
+        return max(st["accounts"], key=lambda a: ((a.get("active") or {}).get("sessions", 0),
+                                                  (a.get("active") or {}).get("desktop", False)))
+
     def update_icon():
         u = usage_data["usage"]
-        if u:
+        active = active_account()
+        if active:
+            session = f"{active['session']:.0f}%" if active["session"] is not None else "–"
+            tray.setIcon(QIcon(create_icon_pixmap(session, f"{active['weekly']:.0f}%")))
+            tray.setToolTip("\n".join(budget.summary_lines(usage_data["budget"])))
+        elif u:
             tray.setIcon(QIcon(create_icon_pixmap(f"{u['session_pct']}%", f"{u['weekly_pct']}%")))
-            tray.setToolTip(
-                f"Session (5h): {u['session_pct']}% resets {u['session_reset']}\n"
-                f"Weekly (7d): {u['weekly_pct']}% resets {u['weekly_reset']}"
-            )
+            # With the guard's status the tooltip shows every account; otherwise just this one.
+            tray.setToolTip("\n".join(budget.summary_lines(usage_data["budget"]) or [
+                f"Session (5h): {u['session_pct']}% resets {u['session_reset']}",
+                f"Weekly (7d): {u['weekly_pct']}% resets {u['weekly_reset']}",
+            ]))
             # Recovered — restore normal interval
             normal_ms = config.get("refresh_interval", 5) * 60 * 1000
             if timer.interval() != normal_ms:
@@ -419,8 +656,15 @@ def run_qt():
         update_menu()
 
     def poll_once():
+        try:
+            _, changed = usage_cache.refresh_all(config)
+            if changed:
+                save_config(config)
+        except Exception as e:
+            print(f"usage cache refresh failed: {e}", file=sys.stderr)
+        usage_data["budget"] = budget.status()
         if not config.get("session_cookie"):
-            usage_data["error"] = "Not configured"
+            usage_data["error"] = None if usage_data["budget"] else "Not configured"
             return
         try:
             if not config.get("org_id"):
@@ -475,6 +719,18 @@ def run_qt():
 
     # Initial refresh
     do_refresh()
+
+    # The budget changes with the clock too (a new day frees more), not only per poll.
+    def refresh_budget():
+        try:
+            usage_cache.update_activity()
+        except Exception as e:
+            print(f"activity refresh failed: {e}", file=sys.stderr)
+        usage_data["budget"] = budget.status()
+        update_icon()
+    budget_timer = QTimer()
+    budget_timer.timeout.connect(refresh_budget)
+    budget_timer.start(60 * 1000)
 
     # Auto-refresh timer
     timer.timeout.connect(do_refresh)
