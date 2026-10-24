@@ -440,18 +440,20 @@ def run_qt():
             import re
             dlg = QDialog(self)
             dlg.setWindowTitle("Add account")
+            dlg.setMinimumWidth(420)
             form = QFormLayout(dlg)
             org_in = QLineEdit()
-            org_in.setPlaceholderText("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
             name_in = QLineEdit()
             cookie_in = QLineEdit()
             cookie_in.setEchoMode(QLineEdit.EchoMode.Password)
-            cookie_in.setPlaceholderText("optional sessionKey")
+            org_in.setPlaceholderText("optional with a cookie")
+            cookie_in.setPlaceholderText("sessionKey, to fetch its usage")
+            form.addRow("Session cookie:", cookie_in)
             form.addRow("Organization ID:", org_in)
             form.addRow("Name:", name_in)
-            form.addRow("Session cookie:", cookie_in)
-            hint = QLabel("The ID is in claude.ai/settings URLs, or CLAUDE_CODE_ORGANIZATION_UUID "
-                          "in a Claude Code session.")
+            hint = QLabel("Give the cookie, the ID, or both. Without a cookie the account counts as "
+                          "unused until it shows up in a Desktop profile. The ID is in claude.ai/settings "
+                          "URLs, or CLAUDE_CODE_ORGANIZATION_UUID in a Claude Code session.")
             hint.setWordWrap(True)
             hint.setStyleSheet("color: #888;")
             form.addRow(hint)
@@ -468,6 +470,16 @@ def run_qt():
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 return
             org = re.sub(r"^org_", "", org_in.text().strip().lower())
+            cookie = cookie_in.text().strip()
+            if not org and cookie:
+                try:
+                    org = fetch_org_id(cookie)
+                except Exception as e:
+                    QMessageBox.warning(self, "Cookie not accepted", f"Couldn't read the account from that cookie: {e}")
+                    return
+            if not org:
+                QMessageBox.warning(self, "Nothing to add", "Give a session cookie or an organization ID.")
+                return
             if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", org):
                 QMessageBox.warning(self, "Invalid ID", "That doesn't look like an organization ID (a UUID).")
                 return
@@ -475,8 +487,8 @@ def run_qt():
                 QMessageBox.information(self, "Already there", "That account is already in the list.")
                 return
             acc = {"label": name_in.text().strip() or org[:8], "track": True}
-            if cookie_in.text().strip():
-                acc["cookie"] = cookie_in.text().strip()
+            if cookie:
+                acc["cookie"] = cookie
             self._add_row(org, acc, {})
 
         def _remove_account(self):
