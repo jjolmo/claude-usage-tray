@@ -52,10 +52,11 @@ def _api_get(url: str, session_cookie: str):
 
     claude.ai sits behind Cloudflare bot detection, which rejects urllib's TLS
     fingerprint with an HTML challenge (HTTP 403) regardless of the cookie, so
-    requests must go through curl_cffi impersonating a real browser.
+    requests must go through curl_cffi impersonating a real browser. IPv4 is
+    forced because Cloudflare challenges some VPN IPv6 exits it lets through on IPv4.
     """
     try:
-        from curl_cffi import requests as cf_requests
+        from curl_cffi import CurlOpt, requests as cf_requests
     except ImportError:
         return _api_get_urllib(url, session_cookie)
     try:
@@ -65,6 +66,7 @@ def _api_get(url: str, session_cookie: str):
             cookies={"sessionKey": session_cookie},
             impersonate="chrome",
             timeout=15,
+            curl_options={CurlOpt.IPRESOLVE: 1},  # CURL_IPRESOLVE_V4
         )
     except Exception as e:
         raise APIError(str(e))
