@@ -529,9 +529,12 @@ def run_qt():
 
             target = spin(10, 100, g["target_pct"], " %")
             day_start = spin(0, 23, g["day_start_hour"], ":00")
+            work_start = spin(0, 23, g["work_start_hour"], ":00")
+            work_start.setToolTip("Usage is only expected from this hour until the day ends.")
             warn = spin(0, 50, g["warn_margin"], " %")
             form.addRow("Weekly target per account:", target)
             form.addRow("Day starts at:", day_start)
+            form.addRow("Work starts at:", work_start)
             form.addRow("Warn when less than this is left today:", warn)
             floor = spin(1, 10, g["accounts"])
             floor.setToolTip("Accounts not in the list yet still count, up to this number.")
@@ -551,7 +554,7 @@ def run_qt():
             form.addRow(hint)
 
             self.guard_widgets = {"enabled": enabled, "mode": mode, "target_pct": target,
-                                  "day_start_hour": day_start, "warn_margin": warn, "accounts": floor}
+                                  "day_start_hour": day_start, "work_start_hour": work_start, "warn_margin": warn, "accounts": floor}
             return group
 
         def _guard_values(self):
@@ -561,6 +564,7 @@ def run_qt():
                 "mode": w["mode"].currentData(),
                 "target_pct": w["target_pct"].value(),
                 "day_start_hour": w["day_start_hour"].value(),
+                "work_start_hour": w["work_start_hour"].value(),
                 "warn_margin": w["warn_margin"].value(),
                 "accounts": w["accounts"].value(),
             }

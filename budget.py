@@ -22,6 +22,7 @@ GUARD_DEFAULTS = {
     "target_pct": 98,
     "accounts": 2,
     "day_start_hour": 0,
+    "work_start_hour": 8,
     "warn_margin": 5,
 }
 
@@ -92,7 +93,8 @@ def _today(st: dict) -> tuple[float, str]:
         return 100, f"Today   STOP · resume {resume}"
     spent = st["today"] or 0
     total = spent + max(0, st["slack"])
-    return (100 * spent / total if total else 0), f"Today   {max(0, st['slack']):.0f}% left of {total:.0f}%"
+    pct = 100 * spent / total if total else 0
+    return pct, f"Today   {pct:.0f}% used"
 
 
 def _activity(active: dict | None) -> str:
@@ -115,8 +117,8 @@ def summary_lines(st: dict | None) -> list[str]:
     for a in st["accounts"]:
         lines += ["", a["label"] + _activity(a.get("active"))]
         if a["session"] is not None:
-            reset = _format_reset(a["session_reset"]) if a["session_reset"] else "?"
-            lines.append(f"{bar(a['session'])}  5h      {a['session']:.0f}% · {reset}")
+            reset = f" · {_format_reset(a['session_reset'])}" if a["session_reset"] else ""
+            lines.append(f"{bar(a['session'])}  5h      {a['session']:.0f}%{reset}")
         lines.append(f"{bar(a['weekly'])}  Week   {a['weekly']:.0f}% · {_day_time(a['reset'])}")
     labels = st.get("missing_labels") or []
     for i in range(st["missing"]):
