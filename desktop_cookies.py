@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 PROFILE_ROOTS = [Path.home() / ".config" / "Claude"]
@@ -78,10 +79,11 @@ def session_keys() -> dict[str, str]:
             copy = Path(tmp) / f"{profile.name}.db"
             shutil.copy(db, copy)
             try:
-                rows = sqlite3.connect(copy).execute(
-                    "SELECT host_key, encrypted_value FROM cookies "
-                    "WHERE name = 'sessionKey' AND host_key LIKE '%claude.ai'"
-                ).fetchall()
+                with closing(sqlite3.connect(copy)) as conn:
+                    rows = conn.execute(
+                        "SELECT host_key, encrypted_value FROM cookies "
+                        "WHERE name = 'sessionKey' AND host_key LIKE '%claude.ai'"
+                    ).fetchall()
             except sqlite3.Error:
                 continue
             for host, value in rows:
